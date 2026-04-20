@@ -950,3 +950,12 @@ class TestExasol(Validator):
                 write="exasol",
                 unsupported_level=ErrorLevel.RAISE,
             )
+
+    def test_use(self):
+        self.validate_all(
+            "USE mydb",
+            write={
+                "exasol": "OPEN SCHEMA mydb",
+                "mysql": "USE mydb",
+            },
+        )

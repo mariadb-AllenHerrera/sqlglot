@@ -876,6 +876,10 @@ class ExasolGenerator(generator.Generator):
         "zone",
     }
 
+    def use_sql(self, expression: exp.Use) -> str:
+        this = self.sql(expression, "this")
+        return f"OPEN SCHEMA {this}" if this else "OPEN SCHEMA"
+
     def converttimezone_sql(self, expression: exp.ConvertTimezone) -> str:
         from_tz = expression.args.get("source_tz")
         to_tz = expression.args.get("target_tz")
