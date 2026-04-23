@@ -24,6 +24,14 @@ def _sha2_sql(self: ExasolGenerator, expression: exp.SHA2) -> str:
     return self.func(func_name, expression.this)
 
 
+def _jsonobject_unsupported_sql(self: ExasolGenerator, expression: exp.JSONObject) -> str:
+    # Exasol has no native JSON_OBJECT; the base generator's SQL:2016 emit
+    # ("'k': v" pairs) is a parse error in Exasol. Flag as unsupported and fall
+    # back to the base emit so callers see the warning rather than silent garbage.
+    self.unsupported("Exasol has no native JSON_OBJECT")
+    return self._jsonobject_sql(expression)
+
+
 def _date_diff_sql(self: ExasolGenerator, expression: exp.DateDiff | exp.TsOrDsDiff) -> str:
     unit = expression.text("unit").upper() or "DAY"
 
@@ -334,6 +342,7 @@ class ExasolGenerator(generator.Generator):
         exp.DateSub: _add_date_sql,
         # https://docs.exasol.com/db/latest/sql_references/functions/alphabeticallistfunctions/div.htm#DIV
         exp.IntDiv: rename_func("DIV"),
+        exp.JSONObject: _jsonobject_unsupported_sql,
         exp.TsOrDsDiff: _date_diff_sql,
         exp.DateTrunc: _date_trunc_sql,
         exp.DayOfWeek: lambda self, e: f"CAST(TO_CHAR({self.sql(e, 'this')}, 'D') AS INTEGER)",
@@ -919,15 +928,29 @@ class ExasolGenerator(generator.Generator):
         return self.sql(expression.this)
 
     def jsonextract_sql(self, expression: exp.JSONExtract) -> str:
+        emits = self.sql(expression, "emits")
+
+        # Exasol's JSON_EXTRACT is a table-returning function that always requires EMITS.
+        # Scalar callers (e.g., MySQL JSON_EXTRACT / -> / ->>) must map to JSON_VALUE instead.
+        if not emits and expression.this is not None and not expression.expressions:
+            return self.func("JSON_VALUE", expression.this, expression.expression)
+
         sql = self.func(
             "JSON_EXTRACT", expression.this, expression.expression, *expression.expressions
         )
 
-        emits = self.sql(expression, "emits")
         if emits:
-            sql = f"{sql} EMITS {emits}"
+            return f"{sql} EMITS {emits}"
+
+        if expression.this is not None:
+            self.unsupported(
+                "Exasol JSON_EXTRACT requires an EMITS clause for multi-path extraction"
+            )
 
         return sql
+
+    def jsonextractscalar_sql(self, expression: exp.JSONExtractScalar) -> str:
+        return self.func("JSON_VALUE", expression.this, expression.expression)
 
     @unsupported_args("flag")
     def regexplike_sql(self, expression: exp.RegexpLike) -> str:

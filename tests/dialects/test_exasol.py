@@ -891,6 +891,49 @@ class TestExasol(Validator):
             """SELECT JSON_EXTRACT('{"firstname" : "Ann", "surname" : "Smith", "age" : 29}', '$.firstname', '$.surname', '$.age') EMITS (firstname VARCHAR(100), surname VARCHAR(100), age INT)"""
         )
 
+        # Exasol's JSON_EXTRACT is table-returning and requires EMITS; the scalar
+        # callers from MySQL/MariaDB (JSON_EXTRACT, ->, ->>) must map to JSON_VALUE.
+        self.validate_all(
+            """SELECT JSON_VALUE("data", '$.a') FROM t""",
+            read={"mysql": "SELECT JSON_EXTRACT(data, '$.a') FROM t"},
+            write={"exasol": """SELECT JSON_VALUE("data", '$.a') FROM t"""},
+        )
+        self.validate_all(
+            """SELECT JSON_VALUE("data", '$.a') FROM t""",
+            read={"mysql": "SELECT data -> '$.a' FROM t"},
+            write={"exasol": """SELECT JSON_VALUE("data", '$.a') FROM t"""},
+        )
+        self.validate_all(
+            """SELECT JSON_VALUE("data", '$.a') FROM t""",
+            read={"mysql": "SELECT data ->> '$.a' FROM t"},
+            write={"exasol": """SELECT JSON_VALUE("data", '$.a') FROM t"""},
+        )
+
+        # Multi-path MySQL JSON_EXTRACT has no scalar Exasol equivalent; preserve
+        # the call so users can supply an EMITS clause manually, but warn loudly.
+        self.validate_all(
+            """SELECT JSON_EXTRACT("data", '$.a', '$.b') FROM t""",
+            read={"mysql": "SELECT JSON_EXTRACT(data, '$.a', '$.b') FROM t"},
+            write={"exasol": """SELECT JSON_EXTRACT("data", '$.a', '$.b') FROM t"""},
+        )
+        with self.assertRaises(UnsupportedError):
+            transpile(
+                "SELECT JSON_EXTRACT(data, '$.a', '$.b') FROM t",
+                read="mysql",
+                write="exasol",
+                unsupported_level=ErrorLevel.RAISE,
+            )
+
+        # JSON_OBJECT has no native Exasol equivalent; the SQL:2016 emit is a
+        # parse error in Exasol, so flag unsupported.
+        with self.assertRaises(UnsupportedError):
+            transpile(
+                "SELECT JSON_OBJECT('a', 1, 'b', 'hello')",
+                read="mysql",
+                write="exasol",
+                unsupported_level=ErrorLevel.RAISE,
+            )
+
     def test_group_by_all(self):
         self.validate_all(
             "SELECT id, city, COUNT(*) FROM dealer GROUP BY ALL",
