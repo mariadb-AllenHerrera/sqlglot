@@ -311,6 +311,19 @@ class ExasolGenerator(generator.Generator):
 
         return super().datatype_sql(expression)
 
+    def set_sql(self, expression: exp.Set) -> str:
+        # MySQL `SET NAMES <charset>` has no Exasol equivalent — drop to a
+        # comment-only no-op (Exasol parses comments as a rowCount no-op).
+        items = expression.expressions or []
+        if (
+            len(items) == 1
+            and isinstance(items[0], exp.SetItem)
+            and items[0].args.get("kind") == "NAMES"
+        ):
+            self.unsupported("SET NAMES has no Exasol equivalent")
+            return "-- SET NAMES is a no-op on Exasol"
+        return super().set_sql(expression)
+
     TRANSFORMS = {
         **generator.Generator.TRANSFORMS,
         # https://docs.exasol.com/db/latest/sql_references/functions/alphabeticallistfunctions/every.htm

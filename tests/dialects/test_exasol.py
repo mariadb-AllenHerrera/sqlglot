@@ -35,6 +35,25 @@ class TestExasol(Validator):
             "select foo, bar from table_1 minus select foo, bar from table_2",
             "SELECT foo, bar FROM table_1 EXCEPT SELECT foo, bar FROM table_2",
         )
+        # MySQL SET NAMES has no Exasol equivalent — emitted as comment-only
+        # no-op. Output isn't round-trip-parseable, so transpile directly.
+        for src in (
+            "SET NAMES utf8",
+            "SET NAMES 'utf8mb4'",
+            "SET NAMES utf8 COLLATE utf8_general_ci",
+        ):
+            with self.subTest(src):
+                self.assertEqual(
+                    transpile(src, read="mysql", write="exasol")[0],
+                    "-- SET NAMES is a no-op on Exasol",
+                )
+        with self.assertRaises(UnsupportedError):
+            transpile(
+                "SET NAMES utf8",
+                read="mysql",
+                write="exasol",
+                unsupported_level=ErrorLevel.RAISE,
+            )
 
     def test_exasol_keywords(self):
         keywords = ["CS", "ADD", "BOOLEAN", "CALL", "CONTROL"]
