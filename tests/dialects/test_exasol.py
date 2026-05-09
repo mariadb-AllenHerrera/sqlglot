@@ -1017,3 +1017,26 @@ class TestExasol(Validator):
             read={"mysql": "SELECT COUNT(*) AS cnt FROM t HAVING cnt > 1"},
             write={"exasol": "SELECT COUNT(*) AS cnt FROM t HAVING LOCAL.cnt > 1"},
         )
+        # Case-mismatched alias reference (MySQL is case-insensitive on unquoted
+        # identifiers, so `idfield` resolves to alias `idField`).
+        self.validate_all(
+            "SELECT id AS idField FROM t GROUP BY LOCAL.idfield",
+            read={"mysql": "SELECT id AS idField FROM t GROUP BY idfield"},
+            write={"exasol": "SELECT id AS idField FROM t GROUP BY LOCAL.idfield"},
+        )
+        self.validate_all(
+            "SELECT COUNT(*) AS Cnt FROM t HAVING LOCAL.cnt > 1",
+            read={"mysql": "SELECT COUNT(*) AS Cnt FROM t HAVING cnt > 1"},
+            write={"exasol": "SELECT COUNT(*) AS Cnt FROM t HAVING LOCAL.cnt > 1"},
+        )
+        # Outer alias `idField` shadows a same-cased CTE column `idfield`; the
+        # GROUP BY must resolve to the alias (MySQL semantics), so prepend LOCAL.
+        self.validate_all(
+            "WITH t AS (SELECT 1 AS id, 999 AS idfield) SELECT id AS idField FROM t GROUP BY LOCAL.idfield",
+            read={
+                "mysql": "WITH t AS (SELECT 1 AS id, 999 AS idfield) SELECT id AS idField FROM t GROUP BY idfield"
+            },
+            write={
+                "exasol": "WITH t AS (SELECT 1 AS id, 999 AS idfield) SELECT id AS idField FROM t GROUP BY LOCAL.idfield"
+            },
+        )

@@ -37,8 +37,14 @@ def _date_diff_sql(self: ExasolGenerator, expression: exp.DateDiff | exp.TsOrDsD
 # https://docs.exasol.com/db/latest/sql/select.htm#:~:text=If%20you%20have,local.x%3E10
 def _add_local_prefix_for_aliases(expression: exp.Expr) -> exp.Expr:
     if isinstance(expression, exp.Select):
-        aliases: dict[str, bool] = {
-            alias.name: bool(alias.args.get("quoted"))
+        # Source dialects like MySQL match unquoted alias references case-insensitively
+        # (`GROUP BY idfield` resolves to alias `idField`), so case-fold unquoted names.
+        # Quoted identifiers stay case-sensitive per SQL standard.
+        def _key(ident: exp.Identifier) -> str:
+            return ident.name if bool(ident.args.get("quoted")) else ident.name.lower()
+
+        aliases: set[str] = {
+            _key(alias)
             for sel in expression.selects
             if isinstance(sel, exp.Alias) and (alias := sel.args.get("alias"))
         }
@@ -53,29 +59,30 @@ def _add_local_prefix_for_aliases(expression: exp.Expr) -> exp.Expr:
         ):
             table_ident.replace(exp.to_identifier(table_ident.name.upper(), quoted=True))
 
-        def prefix_local(node: exp.Expr, visible_aliases: dict[str, bool]) -> exp.Expr:
-            if isinstance(node, exp.Column) and not node.table:
-                if node.name in visible_aliases:
-                    return exp.Column(
-                        this=exp.to_identifier(node.name, quoted=visible_aliases[node.name]),
-                        table=exp.to_identifier("LOCAL", quoted=False),
-                    )
+        def prefix_local(node: exp.Expr, visible_aliases: set[str]) -> exp.Expr:
+            if (
+                isinstance(node, exp.Column)
+                and not node.table
+                and _key(node.this) in visible_aliases
+            ):
+                return exp.Column(
+                    this=node.this.copy(),
+                    table=exp.to_identifier("LOCAL", quoted=False),
+                )
             return node
 
         for key in ("where", "group", "having"):
             if arg := expression.args.get(key):
                 expression.set(key, arg.transform(lambda node: prefix_local(node, aliases)))
 
-        seen_aliases: dict[str, bool] = {}
+        seen_aliases: set[str] = set()
         new_selects: list[exp.Expr] = []
         for sel in expression.selects:
             if isinstance(sel, exp.Alias):
                 inner = sel.this.transform(lambda node: prefix_local(node, seen_aliases))
                 sel.set("this", inner)
-
-                alias_node = sel.args.get("alias")
-
-                seen_aliases[sel.alias] = bool(alias_node and getattr(alias_node, "quoted", False))
+                if (alias_node := sel.args.get("alias")) is not None:
+                    seen_aliases.add(_key(alias_node))
                 new_selects.append(sel)
             else:
                 new_selects.append(sel.transform(lambda node: prefix_local(node, seen_aliases)))
